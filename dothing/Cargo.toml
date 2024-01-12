@@ -7,10 +7,15 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.79"
+axum = "0.7.3"
 chrono = "0.4.31"
+clap = "4.4.16"
 docker-api = "0.14.0"
 env_logger = "0.10.1"
 log = "0.4.20"
 serde = "1.0.195"
 serde_json = "1.0.111"
-starduck = "0.1.10"
+tokio = "1.35.1"
+# starduck = "0.1"
+
+starduck = {git = "https://github.com/ChipDepot/StarDuck.git", branch = "Adaptation"}
