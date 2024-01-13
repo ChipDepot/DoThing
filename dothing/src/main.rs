@@ -1,57 +1,49 @@
-use docker_api::{
-    opts::{ContainerConnectionOpts, ContainerCreateOpts, ContainerListOpts},
-    Container, Docker,
-};
+mod actions;
+mod dckr;
+mod endpoints;
+mod res;
 
-use starduck::Doctrine;
+#[macro_use]
+extern crate log;
+
+use std::net::SocketAddr;
+
+use docker_api::Docker;
+
+use axum::{Extension, Router};
+use tokio::net::TcpListener;
+
+use starduck::utils::PORT;
+
+const DEFAULT_PORT: u16 = 8050;
 
 #[tokio::main]
 async fn main() {
-    println!("Hello, world!");
+    env_logger::init();
 
-    if let Ok(docker) = Docker::new("unix:///run/docker.sock") {
-        let _info = docker.info().await.unwrap();
+    let docker = dckr::build_docker();
 
-        let opts = ContainerListOpts::builder().all(true).build();
+    let port = starduck::utils::get(PORT).unwrap_or(DEFAULT_PORT);
 
-        let containers = docker.containers();
+    let app = Router::new()
+        .nest("/apps", endpoints::main_router())
+        .layer(Extension(docker));
 
-        let env_vars = vec!["RUST_LOG=mocker", "ip=mqtt_broker"];
-        let cmd = vec!["topic:co2"];
+    let addr = SocketAddr::from(([0, 0, 0, 0], port));
+    let tcp_listener = TcpListener::bind(addr).await.unwrap_or_else(|e| {
+        error!("Could not start server: {e}");
+        std::process::exit(-1);
+    });
 
-        let create_opts = ContainerCreateOpts::builder()
-            .image("mrdahaniel/mocker")
-            .name("MokerTest")
-            .env(env_vars)
-            .command(cmd)
-            .build();
+    info!("Initializing server at {}", &addr);
 
-        let res = containers.create(&create_opts).await.unwrap();
-        let inspect_res = res.inspect().await.unwrap();
-
-        res.start().await.unwrap();
-
-        println!("{}", serde_json::to_string_pretty(&inspect_res).unwrap());
-
-        let container_id = res.id();
-
-        let network_opts = ContainerConnectionOpts::builder(container_id).build();
-
-        if let Err(e) = docker
-            .networks()
-            .get("smart_campus_production_smart_uis")
-            .connect(&network_opts)
-            .await
-        {
-            println!("Err: {}", e);
-        };
-
-        docker
-            .containers()
-            .get(container_id.clone())
-            .start()
-            .await
-            .unwrap();
-        // println!("{:?}", containers.list(&opts).await.unwrap());
-    };
+    axum::serve(
+        tcp_listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await
+    .unwrap_or_else(|e| {
+        error!("Could not start server: {e}");
+        std::process::exit(-1);
+    });
 }
