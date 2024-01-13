@@ -23,12 +23,12 @@ async fn main() {
 
     let docker = dckr::build_docker();
 
-    let port = starduck::utils::get(PORT).unwrap_or(DEFAULT_PORT);
-
     let app = Router::new()
         .nest("/apps", endpoints::main_router())
+        .nest_service("/", endpoints::extras_router())
         .layer(Extension(docker));
 
+    let port = starduck::utils::get(PORT).unwrap_or(DEFAULT_PORT);
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     let tcp_listener = TcpListener::bind(addr).await.unwrap_or_else(|e| {
         error!("Could not start server: {e}");

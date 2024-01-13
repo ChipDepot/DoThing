@@ -8,7 +8,7 @@ use axum::Router;
 use tower_http::services::ServeFile;
 
 pub(crate) fn main_router() -> Router {
-    Router::new().route("/", post(director::recieve_directive))
+    Router::new().route("/", post(director::recieve_order))
 }
 
 pub(crate) fn extras_router() -> Router {
