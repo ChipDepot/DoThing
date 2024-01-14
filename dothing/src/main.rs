@@ -8,8 +8,6 @@ extern crate log;
 
 use std::net::SocketAddr;
 
-use docker_api::Docker;
-
 use axum::{Extension, Router};
 use tokio::net::TcpListener;
 

@@ -27,9 +27,7 @@ pub fn build_docker() -> Docker {
 }
 
 pub trait ConnectionBuilder {
-    fn build_connection<I>(&self, container_id: I) -> ContainerConnectionOpts
-    where
-        I: AsRef<str>;
+    fn build_connection<I: AsRef<str>>(&self, container_id: I) -> ContainerConnectionOpts;
 }
 
 pub trait ContainerBuilder {
