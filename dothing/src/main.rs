@@ -6,12 +6,12 @@ mod res;
 #[macro_use]
 extern crate log;
 
-use std::net::SocketAddr;
+use std::{collections::HashMap, net::SocketAddr};
 
 use axum::{Extension, Router};
 use tokio::net::TcpListener;
 
-use starduck::utils::PORT;
+use starduck::{utils::PORT, AdditionOrder};
 
 const DEFAULT_PORT: u16 = 8050;
 
@@ -22,7 +22,7 @@ async fn main() {
     let docker = dckr::build_docker();
 
     let app = Router::new()
-        .nest("/apps", endpoints::main_router())
+        .nest("/", endpoints::main_router())
         .nest_service("/", endpoints::extras_router())
         .layer(Extension(docker));
 
