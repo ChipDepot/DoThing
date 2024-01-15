@@ -7,10 +7,23 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.79"
+axum = "0.7.3"
 chrono = "0.4.31"
 docker-api = "0.14.0"
 env_logger = "0.10.1"
 log = "0.4.20"
 serde = "1.0.195"
 serde_json = "1.0.111"
-starduck = "0.1.10"
+tokio = { version = "1.35.1", features = ["full"] }
+
+starduck = { git = "https://github.com/ChipDepot/StarDuck.git", branch = "Adaptation" }
+# starduck = "0.1"
+# starduck = { path = "../../StarDuck/starduck" }
+
+uuid = { version = "1.6.1", features = ["serde", "v4"] }
+tower-http = { version = "0.5.0", features = ["fs"] }
+tower = "0.4.13"
+http = "1.0.0"
+quit = "2.0"
+async-trait = "0.1.77"
+reqwest = { version = "0.11.23", features = ["json"] }
