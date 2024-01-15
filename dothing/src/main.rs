@@ -1,6 +1,7 @@
 mod actions;
 mod dckr;
 mod endpoints;
+mod http;
 mod res;
 
 #[macro_use]

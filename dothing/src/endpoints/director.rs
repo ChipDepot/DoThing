@@ -1,5 +1,4 @@
 use std::net::SocketAddr;
-use std::path::PathBuf;
 
 use axum::extract::ConnectInfo;
 use axum::http::{Method, StatusCode};
@@ -10,10 +9,12 @@ use docker_api::Docker;
 use docker_api::Error::Fault;
 
 use docker_api::opts::ContainerRestartOpts;
+use reqwest::Client;
 use serde_json::json;
-use starduck::{AdditionOrder, RestartOrder};
+use starduck::{AdditionOrder, ReconfigureOrder, RestartOrder};
 
 use crate::dckr::{ConnectionBuilder, ContainerBuilder, FindContainer};
+use crate::http::BuildRequest;
 
 pub async fn recieve_addition_order(
     method: Method,
@@ -90,6 +91,50 @@ pub async fn recieve_restart_order(
         }
 
         return (StatusCode::OK).into_response();
+    };
+
+    let json = json!({
+        "msg": "Could not find container"
+    });
+
+    (StatusCode::NOT_FOUND, Json(json)).into_response()
+}
+
+pub async fn recieve_update_order(
+    method: Method,
+    Extension(docker): Extension<Docker>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Json(update): Json<ReconfigureOrder>,
+) -> Response {
+    info!("{method} request from {addr}");
+
+    if let Some(cont) = update.find_container(&docker).await {
+        match (cont.inspect().await, &update.reconfig) {
+            (Ok(cont_info), starduck::ReconfigureType::Http { .. }) => {
+                let domain = cont_info.name.unwrap();
+                if let Ok(request) = update.reconfig.build_request(&domain) {
+                    if let Ok(response) = Client::new().execute(request).await {
+                        let code = response.status();
+                        return (StatusCode::from_u16(code.as_u16()).unwrap()).into_response();
+                    }
+                }
+
+                let json = json!({
+                    "msg": "Could build request"
+                });
+
+                return (StatusCode::NOT_FOUND, Json(json)).into_response();
+            }
+            (Err(e), _) => match e {
+                Fault { code, message } => {
+                    let json = json!({"msg": message});
+
+                    return (StatusCode::from_u16(code.as_u16()).unwrap(), Json(json))
+                        .into_response();
+                }
+                _ => return (StatusCode::IM_A_TEAPOT).into_response(),
+            },
+        }
     };
 
     let json = json!({
