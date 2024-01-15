@@ -1,16 +1,12 @@
 use crate::dckr::FindContainer;
-use crate::http::BuildRequest;
 
 use docker_api::opts::ContainerListOpts;
 use docker_api::{Container, Docker};
 
-use anyhow::{bail, Context, Result};
-use http::Method;
-use reqwest::{Client, Request};
 use serde::Deserialize;
 use uuid::Uuid;
 
-use starduck::{QueryType, ReconfigureOrder, ReconfigureType};
+use starduck::{QueryType, ReconfigureOrder};
 
 #[async_trait::async_trait]
 impl FindContainer for ReconfigureOrder {
@@ -52,22 +48,5 @@ impl FindContainer for ReconfigureOrder {
         }
 
         None
-    }
-}
-
-impl BuildRequest for ReconfigureType {
-    fn build_request<I: AsRef<str>>(&self, domain: I) -> Result<Request> {
-        match self {
-            ReconfigureType::Http {
-                method, payload, ..
-            } => match (method.clone(), self.build_url(domain)) {
-                (Method::PUT, Some(url)) => Client::new()
-                    .put(url)
-                    .json(payload)
-                    .build()
-                    .with_context(|| "Could not build request"),
-                _ => bail!("Could not build request"),
-            },
-        }
     }
 }

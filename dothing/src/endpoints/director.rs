@@ -14,7 +14,6 @@ use serde_json::json;
 use starduck::{AdditionOrder, ReconfigureOrder, RestartOrder};
 
 use crate::dckr::{ConnectionBuilder, ContainerBuilder, FindContainer};
-use crate::http::BuildRequest;
 
 pub async fn recieve_addition_order(
     method: Method,
@@ -110,20 +109,38 @@ pub async fn recieve_update_order(
 
     if let Some(cont) = update.find_container(&docker).await {
         match (cont.inspect().await, &update.reconfig) {
-            (Ok(cont_info), starduck::ReconfigureType::Http { .. }) => {
+            (
+                Ok(cont_info),
+                starduck::ReconfigureType::Http {
+                    endpoint,
+                    method,
+                    payload,
+                    port,
+                },
+            ) => {
+                let cli = Client::new();
                 let domain = cont_info.name.unwrap();
-                if let Ok(request) = update.reconfig.build_request(&domain) {
-                    if let Ok(response) = Client::new().execute(request).await {
+                let url = format!("http://{}:{}{}", domain, port, endpoint.to_string_lossy());
+
+                let response = match method.clone() {
+                    Method::PUT => cli.put(url).json(payload).send().await,
+                    _ => {
+                        let json = json!({ "msg": "Could not build request" });
+                        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json)).into_response();
+                    }
+                };
+
+                match response {
+                    Ok(response) => {
                         let code = response.status();
                         return (StatusCode::from_u16(code.as_u16()).unwrap()).into_response();
                     }
-                }
-
-                let json = json!({
-                    "msg": "Could build request"
-                });
-
-                return (StatusCode::NOT_FOUND, Json(json)).into_response();
+                    Err(e) => {
+                        return (StatusCode::from_u16(e.status().unwrap().as_u16())
+                            .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR))
+                        .into_response()
+                    }
+                };
             }
             (Err(e), _) => match e {
                 Fault { code, message } => {
@@ -137,9 +154,6 @@ pub async fn recieve_update_order(
         }
     };
 
-    let json = json!({
-        "msg": "Could not find container"
-    });
-
+    let json = json!({ "msg": "Could not find container!" });
     (StatusCode::NOT_FOUND, Json(json)).into_response()
 }

@@ -1,18 +1,17 @@
 mod actions;
 mod dckr;
 mod endpoints;
-mod http;
 mod res;
 
 #[macro_use]
 extern crate log;
 
-use std::{collections::HashMap, net::SocketAddr};
+use std::net::SocketAddr;
 
 use axum::{Extension, Router};
 use tokio::net::TcpListener;
 
-use starduck::{utils::PORT, AdditionOrder};
+use starduck::utils::PORT;
 
 const DEFAULT_PORT: u16 = 8050;
 
