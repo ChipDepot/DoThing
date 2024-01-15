@@ -15,6 +15,8 @@ use starduck::{AdditionOrder, ReconfigureOrder, RestartOrder};
 
 use crate::dckr::{ConnectionBuilder, ContainerBuilder, FindContainer};
 
+const RUNNING: &str = "running";
+
 pub async fn recieve_addition_order(
     method: Method,
     Extension(docker): Extension<Docker>,
@@ -78,18 +80,37 @@ pub async fn recieve_restart_order(
     info!("{method} request from {addr}");
 
     if let Some(cont) = restart.find_container(&docker).await {
-        let restart_opts = ContainerRestartOpts::builder().build();
+        let cont_info = cont.inspect().await.unwrap();
 
-        if let Err(e) = cont.restart(&restart_opts).await {
-            if let Fault { code, message } = e {
-                let status_code = StatusCode::from_u16(code.as_u16()).unwrap();
-                return (status_code, message).into_response();
+        match cont_info.state.and_then(|s| s.status) {
+            Some(status) if status.as_str() == RUNNING => {
+                let restart_opts = ContainerRestartOpts::builder().build();
+
+                if let Err(e) = cont.restart(&restart_opts).await {
+                    if let Fault { code, message } = e {
+                        let status_code = StatusCode::from_u16(code.as_u16()).unwrap();
+                        return (status_code, message).into_response();
+                    }
+
+                    return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
+                }
+
+                return (StatusCode::OK).into_response();
             }
+            Some(_) => {
+                if let Err(e) = cont.start().await {
+                    if let Fault { code, message } = e {
+                        let status_code = StatusCode::from_u16(code.as_u16()).unwrap();
+                        return (status_code, message).into_response();
+                    }
 
-            return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
+                    return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
+                }
+
+                return (StatusCode::OK).into_response();
+            }
+            None => todo!(),
         }
-
-        return (StatusCode::OK).into_response();
     };
 
     let json = json!({
