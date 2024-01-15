@@ -1,4 +1,5 @@
 use std::net::SocketAddr;
+use std::path::PathBuf;
 
 use axum::extract::ConnectInfo;
 use axum::http::{Method, StatusCode};
@@ -8,11 +9,13 @@ use axum::{Extension, Json};
 use docker_api::Docker;
 use docker_api::Error::Fault;
 
-use starduck::AdditionOrder;
+use docker_api::opts::ContainerRestartOpts;
+use serde_json::json;
+use starduck::{AdditionOrder, RestartOrder};
 
-use crate::dckr::{ConnectionBuilder, ContainerBuilder};
+use crate::dckr::{ConnectionBuilder, ContainerBuilder, FindContainer};
 
-pub async fn recieve_addition(
+pub async fn recieve_addition_order(
     method: Method,
     Extension(docker): Extension<Docker>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
@@ -64,4 +67,34 @@ pub async fn recieve_addition(
     }
 
     return (StatusCode::OK).into_response();
+}
+
+pub async fn recieve_restart_order(
+    method: Method,
+    Extension(docker): Extension<Docker>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Json(restart): Json<RestartOrder>,
+) -> Response {
+    info!("{method} request from {addr}");
+
+    if let Some(cont) = restart.find_container(&docker).await {
+        let restart_opts = ContainerRestartOpts::builder().build();
+
+        if let Err(e) = cont.restart(&restart_opts).await {
+            if let Fault { code, message } = e {
+                let status_code = StatusCode::from_u16(code.as_u16()).unwrap();
+                return (status_code, message).into_response();
+            }
+
+            return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
+        }
+
+        return (StatusCode::OK).into_response();
+    };
+
+    let json = json!({
+        "msg": "Could not find container"
+    });
+
+    (StatusCode::NOT_FOUND, Json(json)).into_response()
 }

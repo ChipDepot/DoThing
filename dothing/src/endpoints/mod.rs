@@ -2,15 +2,16 @@ mod director;
 
 use std::path::PathBuf;
 
+use axum::routing::post;
 use axum::Router;
-use axum::{response::IntoResponse, routing::post};
 
 use tower_http::services::ServeFile;
 
 pub(crate) fn main_router() -> Router {
     Router::new()
-        .route("/test", axum::routing::get("yea"))
-        .route("/addition", post(director::recieve_addition))
+        .route("/addition", post(director::recieve_addition_order))
+        .route("/restart", post(director::recieve_restart_order))
+        .route("/reconfig/http", post(""))
 }
 
 pub(crate) fn extras_router() -> Router {

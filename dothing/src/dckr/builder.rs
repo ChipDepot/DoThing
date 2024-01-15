@@ -1,9 +1,7 @@
-use anyhow::{Context, Result};
 use docker_api::{
     opts::{ContainerConnectionOpts, ContainerCreateOpts},
     Docker,
 };
-use http::Uri;
 
 const WIN_SOCKET_URI: &str = "tcp://127.0.0.1:2376";
 const UNIX_SOCKET_URI: &str = "unix:///run/docker.sock";
