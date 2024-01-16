@@ -13,20 +13,30 @@ use reqwest::Client;
 use serde_json::json;
 use starduck::{AdditionOrder, ReconfigureOrder, RestartOrder};
 
+use crate::ContMap;
+
 use crate::dckr::{ConnectionBuilder, ContainerBuilder, FindContainer};
 
 pub async fn recieve_addition_order(
     method: Method,
     Extension(docker): Extension<Docker>,
+    Extension(mapping): Extension<ContMap>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(addition): Json<AdditionOrder>,
 ) -> Response {
     info!("{method} request from {addr}");
 
     let container_opts = addition.build_container();
+    let uuid = match addition.get_uuid() {
+        Ok(uuid) => uuid,
+        Err(e) => return (StatusCode::BAD_REQUEST, Json(e.to_string())).into_response(),
+    };
 
     let container = match docker.containers().create(&container_opts).await {
-        Ok(container) => container,
+        Ok(container) => {
+            mapping.lock().unwrap().insert(uuid, container.id().clone());
+            container
+        }
         Err(e) => {
             error!("Error while creating container: {e}");
             if let Fault { code, message } = e {
@@ -72,6 +82,7 @@ pub async fn recieve_addition_order(
 pub async fn recieve_restart_order(
     method: Method,
     Extension(docker): Extension<Docker>,
+    Extension(mapping): Extension<ContMap>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(restart): Json<RestartOrder>,
 ) -> Response {
