@@ -118,7 +118,7 @@ pub async fn recieve_restart_order(
 
     info!("{method} request from {addr}");
 
-    let uuid = restart.uuid.clone();
+    let uuid = restart.uuid.clone().unwrap();
     let mapp = mapping.lock().unwrap().get(&uuid).cloned();
     if let Some(container_id) = mapp {
         let cont = docker.containers().get(container_id.clone());

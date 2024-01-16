@@ -1,7 +1,6 @@
 mod actions;
 mod dckr;
 mod endpoints;
-mod res;
 
 #[macro_use]
 extern crate log;

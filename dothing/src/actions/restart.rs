@@ -26,7 +26,7 @@ impl FindContainer for RestartOrder {
                 };
 
                 match Self::request_device_uuid(&url).await {
-                    Some(uuid) if uuid == self.uuid => {
+                    Some(uuid) if uuid == self.uuid.unwrap() => {
                         return Some(docker.containers().get(&id));
                     }
                     _ => continue,
