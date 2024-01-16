@@ -5,10 +5,10 @@ use axum::http::{Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::{Extension, Json};
 
-use docker_api::Docker;
-use docker_api::Error::Fault;
-
 use docker_api::opts::ContainerRestartOpts;
+use docker_api::Error::Fault;
+use docker_api::{Container, Docker};
+
 use reqwest::Client;
 use serde_json::json;
 use starduck::{AdditionOrder, ReconfigureOrder, RestartOrder};
@@ -88,44 +88,83 @@ pub async fn recieve_restart_order(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(restart): Json<RestartOrder>,
 ) -> Response {
+    async fn restart_container(container: &Container) -> Response {
+        let restart_opts = ContainerRestartOpts::builder().build();
+
+        if let Err(e) = container.restart(&restart_opts).await {
+            if let Fault { code, message } = e {
+                let status_code = StatusCode::from_u16(code.as_u16()).unwrap();
+                return (status_code, message).into_response();
+            }
+
+            return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
+        }
+
+        return (StatusCode::OK).into_response();
+    }
+
+    async fn start_stopped_container(container: &Container) -> Response {
+        if let Err(e) = container.start().await {
+            if let Fault { code, message } = e {
+                let status_code = StatusCode::from_u16(code.as_u16()).unwrap();
+                return (status_code, message).into_response();
+            }
+
+            return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
+        }
+
+        return (StatusCode::OK).into_response();
+    }
+
     info!("{method} request from {addr}");
 
-    if let Some(cont) = restart.find_container(&docker).await {
+    let uuid = restart.uuid.clone();
+    let mapp = mapping.lock().unwrap().get(&uuid).cloned();
+    if let Some(container_id) = mapp {
+        let cont = docker.containers().get(container_id.clone());
         let cont_info = cont.inspect().await.unwrap();
 
         match cont_info.state.and_then(|s| s.status) {
-            Some(status) if status.as_str() == RUNNING => {
-                let restart_opts = ContainerRestartOpts::builder().build();
-
-                if let Err(e) = cont.restart(&restart_opts).await {
-                    if let Fault { code, message } = e {
-                        let status_code = StatusCode::from_u16(code.as_u16()).unwrap();
-                        return (status_code, message).into_response();
-                    }
-
-                    return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
-                }
-
-                return (StatusCode::OK).into_response();
+            Some(status) if status.as_str() != RUNNING => {
+                return start_stopped_container(&cont).await
             }
+            Some(_) => return restart_container(&cont).await,
+            None => {
+                return (
+                    StatusCode::NO_CONTENT,
+                    Json(json!({"msg": "Container didn't have a status"})),
+                )
+                    .into_response()
+            }
+        }
+    };
+
+    if let Some(cont) = restart.find_container(&docker).await {
+        mapping.lock().unwrap().insert(uuid, cont.id().clone());
+
+        let cont_info = cont.inspect().await.unwrap();
+
+        match cont_info.state.and_then(|s| s.status) {
+            Some(status) if status.as_str() == RUNNING => return restart_container(&cont).await,
             Some(_) => {
-                if let Err(e) = cont.start().await {
-                    if let Fault { code, message } = e {
-                        let status_code = StatusCode::from_u16(code.as_u16()).unwrap();
-                        return (status_code, message).into_response();
-                    }
-
-                    return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
-                }
-
-                return (StatusCode::OK).into_response();
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"msg": "Container can't be restarted"})),
+                )
+                    .into_response()
             }
-            None => todo!(),
+            None => {
+                return (
+                    StatusCode::NO_CONTENT,
+                    Json(json!({"msg": "Container didn't have a status"})),
+                )
+                    .into_response()
+            }
         }
     };
 
     let json = json!({
-        "msg": "Could not find container"
+        "msg": "Couldn't find container"
     });
 
     (StatusCode::NOT_FOUND, Json(json)).into_response()
