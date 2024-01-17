@@ -27,7 +27,7 @@ pub async fn recieve_addition_order(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(addition): Json<AdditionOrder>,
 ) -> Response {
-    info!("{method} request from {addr}");
+    info!("{method} request from {addr} to add container");
 
     info!("Building container...");
     let container_opts = addition.build_container();
@@ -60,7 +60,13 @@ pub async fn recieve_addition_order(
         }
     };
 
-    let cont_name = &container.inspect().await.unwrap().name.unwrap();
+    let cont_name = &container
+        .inspect()
+        .await
+        .unwrap()
+        .name
+        .unwrap()
+        .replace("/", "");
 
     info!("Container created with name: {}", cont_name);
 
@@ -122,7 +128,13 @@ pub async fn recieve_restart_order(
 
         info!("Using RestartOptions: {:?}", &restart_opts);
 
-        let cont_name = &container.inspect().await.unwrap().name.unwrap();
+        let cont_name = &container
+            .inspect()
+            .await
+            .unwrap()
+            .name
+            .unwrap()
+            .replace("/", "");
 
         info!("Restarting container {}...", cont_name);
 
@@ -141,7 +153,13 @@ pub async fn recieve_restart_order(
     }
 
     async fn start_stopped_container(container: &Container) -> Response {
-        let cont_name = &container.inspect().await.unwrap().name.unwrap();
+        let cont_name = &container
+            .inspect()
+            .await
+            .unwrap()
+            .name
+            .unwrap()
+            .replace("/", "");
 
         info!("Starting stopped container {}", cont_name);
 
@@ -161,7 +179,7 @@ pub async fn recieve_restart_order(
         return (StatusCode::OK).into_response();
     }
 
-    info!("{method} request from {addr}");
+    info!("{method} request from {addr} to restart container");
 
     let uuid = restart.uuid.clone().unwrap();
     let mapp = mapping.lock().unwrap().get(&uuid).cloned();
@@ -169,6 +187,8 @@ pub async fn recieve_restart_order(
     info!("Looking for container with uuid {} in the mapping...", uuid);
 
     if let Some(container_id) = mapp {
+        info!("Found container with uuid {} in the mapping", uuid);
+
         let cont = docker.containers().get(container_id.clone());
         let cont_info = cont.inspect().await.unwrap();
 
@@ -250,7 +270,7 @@ pub async fn recieve_update_order(
                 info!("Building reqwest client");
 
                 let cli = Client::new();
-                let domain = cont_info.name.unwrap();
+                let domain = cont_info.name.unwrap().replace("/", "");
                 let url = format!("http://{}:{}{}", domain, port, endpoint.to_string_lossy());
 
                 info!("Built reqwest client");
@@ -275,9 +295,11 @@ pub async fn recieve_update_order(
                         return (StatusCode::from_u16(code.as_u16()).unwrap()).into_response();
                     }
                     Err(e) => {
-                        return (StatusCode::from_u16(e.status().unwrap().as_u16())
-                            .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR))
-                        .into_response();
+                        return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(json!({"msg": e.to_string()})),
+                        )
+                            .into_response();
                     }
                 };
             }
@@ -294,7 +316,7 @@ pub async fn recieve_update_order(
         }
     }
 
-    info!("{method} request from {addr}");
+    info!("{method} request from {addr} to reconfig container");
 
     let uuid = update.uuid.clone().unwrap();
     let mapp = mapping.lock().unwrap().get(&uuid).cloned();
