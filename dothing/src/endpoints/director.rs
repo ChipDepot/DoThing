@@ -5,13 +5,14 @@ use axum::http::{Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::{Extension, Json};
 
+use docker_api::models::ContainerInspect200Response;
 use docker_api::opts::ContainerRestartOpts;
 use docker_api::Error::Fault;
 use docker_api::{Container, Docker};
 
 use reqwest::Client;
 use serde_json::json;
-use starduck::{AdditionOrder, ReconfigureOrder, RestartOrder};
+use starduck::{AdditionOrder, ReconfigureOrder, ReconfigureType, RestartOrder};
 
 use crate::ContMap;
 
@@ -28,11 +29,20 @@ pub async fn recieve_addition_order(
 ) -> Response {
     info!("{method} request from {addr}");
 
+    info!("Building container...");
     let container_opts = addition.build_container();
+
+    info!("Using {:?} as creation options", &container_opts);
+
     let uuid = match addition.get_uuid() {
         Ok(uuid) => uuid,
-        Err(e) => return (StatusCode::BAD_REQUEST, Json(e.to_string())).into_response(),
+        Err(e) => {
+            error!("{e}");
+            return (StatusCode::BAD_REQUEST, Json(e.to_string())).into_response();
+        }
     };
+
+    info!("Sending create signal to docker socket");
 
     let container = match docker.containers().create(&container_opts).await {
         Ok(container) => {
@@ -50,7 +60,16 @@ pub async fn recieve_addition_order(
         }
     };
 
+    let cont_name = &container.inspect().await.unwrap().name.unwrap();
+
+    info!("Container created with name: {}", cont_name);
+
+    info!("Building network connection options...");
+
     let network_opts = addition.build_connection(container.id());
+
+    info!("Built network connection options");
+    info!("Connecting container to network {}", &addition.network_name);
 
     if let Err(e) = docker
         .networks()
@@ -67,6 +86,10 @@ pub async fn recieve_addition_order(
         return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
     }
 
+    info!("Connected container to network {}", &addition.network_name);
+
+    info!("Starting container {}", cont_name);
+
     if let Err(e) = container.start().await {
         error!("Could not start container {}", container.id());
 
@@ -77,6 +100,10 @@ pub async fn recieve_addition_order(
 
         return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
     }
+
+    info!("Started container {}", cont_name);
+
+    info!("Process successful!");
 
     return (StatusCode::OK).into_response();
 }
@@ -89,7 +116,15 @@ pub async fn recieve_restart_order(
     Json(restart): Json<RestartOrder>,
 ) -> Response {
     async fn restart_container(container: &Container) -> Response {
+        info!("Building RestartOptions");
+
         let restart_opts = ContainerRestartOpts::builder().build();
+
+        info!("Using RestartOptions: {:?}", &restart_opts);
+
+        let cont_name = &container.inspect().await.unwrap().name.unwrap();
+
+        info!("Restarting container {}...", cont_name);
 
         if let Err(e) = container.restart(&restart_opts).await {
             if let Fault { code, message } = e {
@@ -100,18 +135,28 @@ pub async fn recieve_restart_order(
             return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
         }
 
+        info!("Container {} restarted", cont_name);
+
         return (StatusCode::OK).into_response();
     }
 
     async fn start_stopped_container(container: &Container) -> Response {
+        let cont_name = &container.inspect().await.unwrap().name.unwrap();
+
+        info!("Starting stopped container {}", cont_name);
+
         if let Err(e) = container.start().await {
             if let Fault { code, message } = e {
                 let status_code = StatusCode::from_u16(code.as_u16()).unwrap();
                 return (status_code, message).into_response();
             }
 
+            warn!("Failed to start stopped container {}", cont_name);
+
             return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
         }
+
+        info!("Started stopped container {}", cont_name);
 
         return (StatusCode::OK).into_response();
     }
@@ -120,6 +165,9 @@ pub async fn recieve_restart_order(
 
     let uuid = restart.uuid.clone().unwrap();
     let mapp = mapping.lock().unwrap().get(&uuid).cloned();
+
+    info!("Looking for container with uuid {} in the mapping...", uuid);
+
     if let Some(container_id) = mapp {
         let cont = docker.containers().get(container_id.clone());
         let cont_info = cont.inspect().await.unwrap();
@@ -139,8 +187,17 @@ pub async fn recieve_restart_order(
         }
     };
 
+    warn!("Could not find container with uuid {} in the mapping", uuid);
+
+    info!("Searching for container in the network...");
+
     if let Some(cont) = restart.find_container(&docker).await {
+        info!("Container found");
+        info!("Adding it to the register");
+
         mapping.lock().unwrap().insert(uuid, cont.id().clone());
+
+        info!("Container added to the register");
 
         let cont_info = cont.inspect().await.unwrap();
 
@@ -163,23 +220,24 @@ pub async fn recieve_restart_order(
         }
     };
 
-    let json = json!({
-        "msg": "Couldn't find container"
-    });
+    warn!("Could not find container");
 
+    let json = json!({ "msg": "Couldn't find container" });
     (StatusCode::NOT_FOUND, Json(json)).into_response()
 }
 
 pub async fn recieve_update_order(
     method: Method,
     Extension(docker): Extension<Docker>,
+    Extension(mapping): Extension<ContMap>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(update): Json<ReconfigureOrder>,
 ) -> Response {
-    info!("{method} request from {addr}");
-
-    if let Some(cont) = update.find_container(&docker).await {
-        match (cont.inspect().await, &update.reconfig) {
+    async fn send_reconfigure_request(
+        cont: Container,
+        reconfig_order: &ReconfigureOrder,
+    ) -> Response {
+        match (cont.inspect().await, &reconfig_order.reconfig) {
             (
                 Ok(cont_info),
                 starduck::ReconfigureType::Http {
@@ -189,17 +247,27 @@ pub async fn recieve_update_order(
                     port,
                 },
             ) => {
+                info!("Building reqwest client");
+
                 let cli = Client::new();
                 let domain = cont_info.name.unwrap();
                 let url = format!("http://{}:{}{}", domain, port, endpoint.to_string_lossy());
 
+                info!("Built reqwest client");
+
+                info!("Sending request to {}", &url);
+
                 let response = match method.clone() {
-                    Method::PUT => cli.put(url).json(payload).send().await,
+                    Method::PUT => cli.put(&url).json(payload).send().await,
                     _ => {
                         let json = json!({ "msg": "Could not build request" });
                         return (StatusCode::INTERNAL_SERVER_ERROR, Json(json)).into_response();
                     }
                 };
+
+                info!("Request made to {}", &url);
+
+                info!("Got response from {}", &url);
 
                 match response {
                     Ok(response) => {
@@ -209,21 +277,52 @@ pub async fn recieve_update_order(
                     Err(e) => {
                         return (StatusCode::from_u16(e.status().unwrap().as_u16())
                             .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR))
-                        .into_response()
+                        .into_response();
                     }
                 };
             }
             (Err(e), _) => match e {
                 Fault { code, message } => {
-                    let json = json!({"msg": message});
+                    info!("Unexpected error: {}", &message);
 
+                    let json = json!({"msg": message});
                     return (StatusCode::from_u16(code.as_u16()).unwrap(), Json(json))
                         .into_response();
                 }
                 _ => return (StatusCode::IM_A_TEAPOT).into_response(),
             },
         }
+    }
+
+    info!("{method} request from {addr}");
+
+    let uuid = update.uuid.clone().unwrap();
+    let mapp = mapping.lock().unwrap().get(&uuid).cloned();
+
+    info!("Looking for container with uuid {} in the mapping...", uuid);
+
+    if let Some(container_id) = mapp {
+        let cont = docker.containers().get(container_id.clone());
+
+        return send_reconfigure_request(cont, &update).await;
     };
+
+    warn!("Could not find container with uuid {} in the mapping", uuid);
+
+    info!("Searching for container in the network...");
+
+    if let Some(cont) = update.find_container(&docker).await {
+        info!("Container found");
+        info!("Adding it to the register");
+
+        mapping.lock().unwrap().insert(uuid, cont.id().clone());
+
+        info!("Container added to the register");
+
+        return send_reconfigure_request(cont, &update).await;
+    };
+
+    warn!("Could not find container");
 
     let json = json!({ "msg": "Could not find container!" });
     (StatusCode::NOT_FOUND, Json(json)).into_response()
