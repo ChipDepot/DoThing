@@ -66,7 +66,13 @@ pub async fn recieve_addition_order(
         .unwrap()
         .name
         .unwrap()
+        .replace("_", "-")
         .replace("/", "");
+
+    if let Err(e) = container.rename(cont_name).await {
+        error!("Could not rename container: {e}");
+        return (StatusCode::INTERNAL_SERVER_ERROR).into_response();
+    };
 
     info!("Container created with name: {}", cont_name);
 
